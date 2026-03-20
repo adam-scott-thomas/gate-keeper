@@ -97,6 +97,27 @@ class ToolFilter:
             for t in self.visible
         ]
 
+    def to_openai_tools(self) -> list[dict[str, Any]]:
+        """Export visible tools as OpenAI function-calling tool dicts.
+
+        Returns a list ready to pass to ``openai.chat.completions.create(tools=...)``.
+        """
+        tools = []
+        for t in self.visible:
+            properties = {k: {"type": v} for k, v in t.inputs.items()} if t.inputs else {}
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": t.name,
+                    "description": t.description or t.name,
+                    "parameters": {
+                        "type": "object",
+                        "properties": properties,
+                    },
+                },
+            })
+        return tools
+
 
 def is_suppressed(execution_class: str, mode: float) -> bool:
     """Check whether a tool with the given class is suppressed at the given mode.
