@@ -40,6 +40,7 @@ class AuthorizationEnvelope:
     dry_run: bool = False
     branching: str = "deny"
     human_approved: bool = False
+    created_at: float = 0.0  # Unix timestamp, signed to prevent replay
     signature: str = ""
 
 
@@ -74,7 +75,9 @@ def build_envelope(
     Returns:
         A signed, frozen AuthorizationEnvelope.
     """
+    import time as _time
     envelope_id = f"env_{context_id}_{uuid.uuid4().hex[:8]}"
+    created_at = _time.time()
     allowed = (tool.name,) + extra_tools
     max_tool_calls, budget_seconds = 20, 30
     execution_mode = "standard"
@@ -88,13 +91,15 @@ def build_envelope(
         "allowed_tools": allowed, "max_tool_calls": max_tool_calls,
         "budget_seconds": budget_seconds, "execution_mode": execution_mode,
         "branching": branching, "human_approved": human_approved,
+        "created_at": created_at,
     }
     sig = hmac.new(signing_key.encode(), _canonical_hash(sign_data).encode(), hashlib.sha256).hexdigest()
     return AuthorizationEnvelope(
         envelope_id=envelope_id, context_id=context_id, tool_name=tool.name,
         allowed_tools=allowed, max_tool_calls=max_tool_calls, max_retries=1,
         budget_seconds=budget_seconds, execution_mode=execution_mode,
-        branching=branching, human_approved=human_approved, signature=sig,
+        branching=branching, human_approved=human_approved,
+        created_at=created_at, signature=sig,
     )
 
 
@@ -117,6 +122,39 @@ def verify_envelope(envelope: AuthorizationEnvelope, signing_key: str) -> bool:
         "max_tool_calls": envelope.max_tool_calls, "budget_seconds": envelope.budget_seconds,
         "execution_mode": envelope.execution_mode, "branching": envelope.branching,
         "human_approved": envelope.human_approved,
+        "created_at": envelope.created_at,
     }
     expected = hmac.new(signing_key.encode(), _canonical_hash(sign_data).encode(), hashlib.sha256).hexdigest()
     return hmac.compare_digest(envelope.signature, expected)
+
+
+def verify_envelope_fresh(
+    envelope: AuthorizationEnvelope, signing_key: str, max_age_seconds: float = 300.0,
+) -> tuple[bool, str]:
+    """Verify envelope signature AND check it hasn't expired.
+
+    Prevents replay attacks — an envelope built during calm mode can't be
+    reused hours later when threat level has risen.
+
+    Args:
+        envelope: The envelope to verify.
+        signing_key: The HMAC signing key.
+        max_age_seconds: Maximum age in seconds (default 300 = 5 minutes).
+
+    Returns:
+        (valid, reason) tuple. If valid is False, reason explains why.
+    """
+    if not verify_envelope(envelope, signing_key):
+        return False, "signature_invalid"
+
+    if envelope.created_at == 0.0:
+        return False, "no_timestamp"
+
+    import time as _time
+    age = _time.time() - envelope.created_at
+    if age > max_age_seconds:
+        return False, f"expired (age={age:.0f}s, max={max_age_seconds:.0f}s)"
+    if age < -30:  # allow 30s clock skew
+        return False, f"future_timestamp (age={age:.0f}s)"
+
+    return True, "valid"
