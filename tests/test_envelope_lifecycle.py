@@ -40,7 +40,7 @@ def _roundtrip_json(envelope: AuthorizationEnvelope) -> AuthorizationEnvelope:
         dry_run=parsed["dry_run"],
         branching=parsed["branching"],
         human_approved=parsed["human_approved"],
-        created_at=parsed.get("created_at", 0.0),
+        created_at=parsed.get("created_at", 0),
         signature=parsed["signature"],
     )
 
@@ -229,7 +229,7 @@ def test_verify_fresh_expired():
     from maelstrom_gate.envelope import verify_envelope_fresh
     e = build_envelope(Tool("r", execution_class="read_only"), 0.1, "ctx", KEY)
     # Manually create an expired envelope by reconstructing with old timestamp
-    old_time = time.time() - 600  # 10 minutes ago
+    old_time = time.time_ns() // 1000 - 600 * 10**6  # 10 minutes ago, in microseconds
     old_data = {
         "envelope_id": e.envelope_id, "context_id": e.context_id,
         "tool_name": e.tool_name, "allowed_tools": e.allowed_tools,

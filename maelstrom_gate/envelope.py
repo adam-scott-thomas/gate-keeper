@@ -40,7 +40,10 @@ class AuthorizationEnvelope:
     dry_run: bool = False
     branching: str = "deny"
     human_approved: bool = False
-    created_at: float = 0.0  # Unix timestamp, signed to prevent replay
+    created_at: int = 0  # Unix microseconds (int64), signed to prevent replay.
+                          # Integer microseconds serialize identically in Python and Go,
+                          # and fit within float64 precision (~15.95 digits) so the
+                          # value survives JSON round-trips through untyped decoders.
     signature: str = ""
 
 
@@ -79,7 +82,7 @@ def build_envelope(
     """
     import time as _time
     envelope_id = f"env_{context_id}_{uuid.uuid4().hex[:8]}"
-    created_at = _time.time()
+    created_at = _time.time_ns() // 1000  # microseconds
     allowed = (tool.name,) + extra_tools
     max_tool_calls, budget_seconds = 20, 30
     execution_mode = "standard"
@@ -149,11 +152,11 @@ def verify_envelope_fresh(
     if not verify_envelope(envelope, signing_key):
         return False, "signature_invalid"
 
-    if envelope.created_at == 0.0:
+    if envelope.created_at == 0:
         return False, "no_timestamp"
 
     import time as _time
-    age = _time.time() - envelope.created_at
+    age = (_time.time_ns() // 1000 - envelope.created_at) / 1e6
     if age > max_age_seconds:
         return False, f"expired (age={age:.0f}s, max={max_age_seconds:.0f}s)"
     if age < -30:  # allow 30s clock skew
