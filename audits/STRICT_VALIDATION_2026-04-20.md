@@ -155,7 +155,31 @@ type Envelope struct {
 ```
 
 Python test (`gate-test/gate_test/test_cross_language_envelope.py`): 3 passed in 0.01s.
-Go test (`gate-server-go/internal/envelope/vectors_test.go`): ready, runs on any host with Go installed (not run in this session — no `go` binary on PATH).
+Go test (`gate-server-go/internal/envelope/vectors_test.go`): PASS.
+
+**Discovery via the Go test run:** the first attempt used `float64` for
+`created_at` and the Go test caught a real bug:
+```
+crisis_mode_deploy_tool: canonical JSON drift
+  got:  ...,"created_at":1713568999,...
+  want: ...,"created_at":1713568999.0,...
+```
+Python's `json.dumps(1713568999.0)` emits `"1713568999.0"` (keeps the `.0`),
+Go's `json.Marshal(float64(1713568999.0))` emits `"1713568999"` (strips it).
+
+A second attempt with `int64` nanoseconds hit a different bug: 19-digit nanos
+exceed float64 precision (~15.95 digits) and lost precision when round-tripping
+through `map[string]any` JSON decoders. Fixed by switching to **integer
+microseconds** (16 digits, fits safely in float64).
+
+**Live end-to-end proof:** Python built an envelope with `time.time_ns() // 1000`
+as `created_at`, serialized to JSON, handed to Go, and Go's `envelope.Verify()`
+returned `true`:
+```
+python envelope id=env_live-test_16173637 created_at=1776664222613140
+Go verification result: true
+--- PASS: TestVerifyPythonBuiltEnvelope
+```
 
 ### Full test suite
 ```
